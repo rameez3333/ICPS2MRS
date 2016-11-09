@@ -2,6 +2,7 @@ from glob import glob
 import os, sys
 import numpy as np
 import time
+from scipy.stats import linregress
 import matplotlib.pyplot as plt
 
 
@@ -25,11 +26,13 @@ diffmeashighlistdict={}
 our5sigmadict={}
 our3sigmadict={}
 oursensdict={}
-
+countsens=[]
+countsensdict={}
 pslim=[]
 our5sigma=[]
 our3sigma=[]
 oursens=[]
+
 diffmeaslow=[]
 diffmeashigh=[]
 flistdict = {}
@@ -39,22 +42,30 @@ ourtestdens=[]
 
 allums=[]
 alldens = []
+countlums=[]
 
-foldname = 'Try'+str(M)
+foldname = 'Whew'+str(M)
 
-for lum in np.linspace(39, 45, 25):
+base = np.linspace(39.0, 45, 25)
+
+for lum in base:
     pslimlistdict[lum] = []
     diffmeaslowlistdict[lum] = []
     diffmeashighlistdict[lum]=[]
     our3sigmadict[lum]=[]
     oursensdict[lum]=[]
+    countsensdict[lum]=[]
     flistdict[lum] = sorted(glob(foldname+"/"+str(np.power(10., lum))+"/Trial*.txt"))
     
-for lum in np.linspace(39, 45, 25):
+for lum in base:
     for f in flistdict[lum]:
         print "Handling Now:", f
-        arr = np.genfromtxt(f, delimiter="|", skip_header=1, converters={8:converterpval, 9:converternow, 10:lambda x: float(x.replace('\n', ''))})
-        densit = arr.transpose()[2][np.where(arr.transpose()[9]==1.0)[0][0]-1]
+        try:
+            arr = np.genfromtxt(f, delimiter="|", skip_header=1, converters={8:converterpval, 9:converternow, 10:lambda x: float(x.replace('\n', ''))})
+            densit = arr.transpose()[2][np.where(arr.transpose()[9]==1.0)[0][0]-1]
+            pslimlistdict[lum].append(densit)
+        except:
+            print "Probably unfinished job"
         try:
             difflow = arr.transpose()[2][np.where(arr.transpose()[3]>9.2e-7)[0][0]]
             diffmeaslowlistdict[lum].append(difflow)
@@ -92,32 +103,53 @@ for lum in np.linspace(39, 45, 25):
         except:
             print 'wtf5'
         try:
-            oursensval = arr.transpose()[2][np.where(arr.transpose()[8]<0.49999980976949693)[0][0]]
+            oursensval = arr.transpose()[2][np.where(arr.transpose()[8]<0.48)[0][0]]
             oursensdict[lum].append(oursensval)
         except:
             print 'wtf6'
-        
+        try:
+            countsensval = arr.transpose()[2][np.where(arr.transpose()[4]>=48)[0][0]]
+            countsensdict[lum].append(countsensval)
+        except:
+            print 'wtf7'
+            
         #print densit, difflow, diffhigh
         
         
         
-        if densit:
-            pslimlistdict[lum].append(densit)
+            
         
         
 disclums=[]
 senslums=[]
-
+difflowlums=[]
+diffhighlums=[]
+pslums=[]
         
-for lum in np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3]:
+for lum in base:
     print lum, np.asarray(oursensdict[lum])
-    pslim.append(np.percentile(np.asarray(pslimlistdict[lum]), 90.))
-    diffmeaslow.append(np.percentile(np.asarray(diffmeaslowlistdict[lum]), 10.))
-    diffmeashigh.append(np.percentile(np.asarray(diffmeashighlistdict[lum]), 90.))
-
-
+    try:
+        pslim.append(np.percentile(np.asarray(pslimlistdict[lum]), 50.))
+        pslums.append(lum)
+    except:
+        print "PSlim not valid"
+    try:
+        diffmeaslow.append(np.percentile(np.asarray(diffmeaslowlistdict[lum]), 10.))
+        difflowlums.append(lum)
+    except:
+        print "Hmm"
+    try:
+        diffmeashigh.append(np.percentile(np.asarray(diffmeashighlistdict[lum]), 90.))
+        diffhighlums.append(lum)
+    except:
+        print "Hmm"
+    try:
+        countsens.append(np.percentile(np.asarray(countsensdict[lum]), 90.))
+        countlums.append(lum)
+    except:
+        print "Fuck"
 print oursensdict    
-for lum in np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3]:
+for lum in base:
     try:
         oursens.append(np.percentile(np.asarray(oursensdict[lum]), 10.))
         senslums.append(lum)
@@ -126,7 +158,7 @@ for lum in np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3]:
         break
 
 print our3sigmadict    
-for lum in np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3]:
+for lum in base:
     try:
         our3sigma.append(np.percentile(our3sigmadict[lum], 50.))
         disclums.append(lum)
@@ -135,18 +167,28 @@ for lum in np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3]:
         break
 #print pslim
 
-plt.plot(np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3], np.asarray(pslim), color='black', linewidth=2, label='90\%C.L UL from PS non detection')
-#plt.plot(np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3], np.asarray(diffmeaslow), color='red', linewidth=2)
-#plt.plot(np.linspace(39, 45, 25)[0:len(np.linspace(39, 45, 25))-3], np.asarray(diffmeashigh), color='green', linewidth=2)
-plt.plot(senslums, np.asarray(oursens), color='green', linewidth=2, label='Sensitivity')
-plt.plot(disclums[0:12], np.asarray(our3sigma)[0:12], color='blue', linewidth=2, label= '3 sigma discovery potential')
+
+#print pslums, pslim
+#print senslums, oursens
+
+print "Lets See", countlums, countsens, countsensdict
+
+print linregress(np.asarray(pslums)[5:], np.log10(np.asarray(pslim))[5:])
+
+plt.plot(np.asarray(pslums), np.asarray(pslim), color='black', linewidth=2, label='90%C.L UL from PS non detection')
+plt.plot(np.asarray(countlums), np.asarray(countsens), color='brown', linewidth=2, label='90%C.L UL from PS Warmspot count')
+plt.plot(np.asarray(diffhighlums), np.asarray(diffmeaslow), color='red', linewidth=2)
+plt.plot(np.asarray(difflowlums), np.asarray(diffmeashigh), color='blue', linewidth=2)
+plt.plot(np.asarray(senslums), np.asarray(oursens), color='green', linewidth=2, label='Sensitivity')
+plt.plot()
+#plt.plot(disclums[0:12], np.asarray(our3sigma)[0:12], color='blue', linewidth=2, label= '3 sigma discovery potential')
 
 
 #plt.scatter(allums, alldens, color='black')
 #plt.scatter(ourtestlums, ourtestdens, color='red')
 plt.ylabel('Source Density at z=0 (MPc^-3)')
 plt.xlabel('log10(Neutrino Luminosity, [erg/s])')
-plt.title('Evolution, (1+z)^0')
+plt.title('Evolution, (1+z)^'+str(M))
 plt.yscale('log')
 plt.legend(loc='best', fontsize=18.)
 

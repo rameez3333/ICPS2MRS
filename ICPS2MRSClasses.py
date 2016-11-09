@@ -4,8 +4,12 @@ import sys,random,glob
 import PAO_ev_list231_final as PAO_ev_list
 import healpy as hp
 import scipy.integrate as integrate
+from scipy.interpolate import InterpolatedUnivariateSpline
 import numpy  as np
-from cosmocalc import cosmocalc
+from astropy.cosmology import Planck15 as cosmo
+
+
+comoving_distance = InterpolatedUnivariateSpline(np.linspace(0, 3, 1000), cosmo.comoving_distance(np.linspace(0, 3, 1000)).value)
 
 radians=np.radians
 degrees=np.degrees
@@ -50,16 +54,19 @@ def setDDir(ddir):
     global DDIR
     DDIR=ddir
     if not os.path.exists(DDIR):
-        os.makedirs(DDIR)
+        try:
+            os.makedirs(DDIR)
+        except :
+            print "Weird"
     if DEBUG:
         print PF(),"the output directory DDIR set to",DDIR
 
-HUBBLEParam = 70.0 #kms^-1Mpc^-1
+HUBBLEParam = cosmo.H0.value #kms^-1Mpc^-1
 MPctocm = 3.085677581e+24
-ergtoGeV = 624151.        
+ergtoGeV = 624.151        
 
 def LumToFlux(Lum, znow):
-    d = np.asarray(map(lambda x :cosmocalc(z=x)['DCMR_cm'], znow))
+    d = comoving_distance(znow)*MPctocm
     flin = Lum/(4.*np.pi*d**2.)
     phi = flin*ergtoGeV
     return phi
@@ -152,15 +159,25 @@ def DoOneScramble(results, args, post_trial=False,inj_bkg_pos_input=None,inj_sig
         return TS,nsfit,nserr,nsig,gr
 
 
-def DoOneLuminosity(luminosity, inj, series= 1, ntr=10000000000000, chunksize=1):
+def DoOneLuminosity(luminosity, inj, series= 1, chunksize=1):
+    chunkscaler = False
     if not os.path.exists(DDIR+"/"+str(luminosity)):
-        os.makedirs(DDIR+"/"+str(luminosity))
+        try:
+            os.makedirs(DDIR+"/"+str(luminosity))
+        except:
+            print "Weird2"
     fout = open(DDIR+'/'+str(luminosity)+'/Trial'+str(series)+'.txt', "w")
     fout.write(str(inj.NL)+"|"+ str(inj.NO)+"|"+str(inj.NU)+"|"+str(inj.SL)+"|"+str(inj.SO)+"|"+str(inj.SU)+"\n")
     i=0
+    optscale =0
+    
+    absdetectcount=0
+    
+    cnt = 0
     while True:
-        cond, line = inj.AddOneSource(luminosity, chunksize=chunksize)
-        if cond:
+        cond, line = inj.AddOneSource(luminosity, chunksize=chunksize, counter=cnt)
+        cnt = cnt +1
+        if cond :
             fout.write(str(i-1)+"|"+line)
             inj.SetSeed()
             maxfilen,inj_bkg_pos = inj.CreateDetSet("IsotropicHS")
@@ -169,9 +186,34 @@ def DoOneLuminosity(luminosity, inj, series= 1, ntr=10000000000000, chunksize=1)
             print i, nsfit, nserr, TS, pvalue, gr
             print inj.Nsrc, inj.Ndensity, inj.TotDiffuseFlux, len(inj.Det["IsotropicHS"].EvList), inj.PTDisc
             fout.write(str(i)+"|"+str(inj.Nsrc)+"|"+str(inj.Ndensity)+"|"+str(inj.TotDiffuseFlux)+"|"+str(len(inj.Det["IsotropicHS"].EvList))+"|"+str(nsfit)+"|"+str(nserr)+"|"+str(TS[0])+"|"+str(pvalue)+"|"+str(inj.PTDisc)+"|"+str(inj.Det["IsotropicHS"].EvList[-1][-1])+"\n")
-            if (inj.TotDiffuseFlux > 3.65e-2) and (len(inj.Det["IsotropicHS"].EvList)-(inj.NL+inj.SL+inj.NU+inj.SU)/2.) > 3*(inj.NO+inj.SO-(inj.NL+inj.SL+inj.NU+inj.SU)/2.):
+            if (inj.TotDiffuseFlux > 3.65e-3) or (len(inj.Det["IsotropicHS"].EvList)-(inj.NL+inj.SL+inj.NU+inj.SU)/2.) > 2*(inj.NO+inj.SO-(inj.NL+inj.SL+inj.NU+inj.SU)/2.):
+                break
+            if i%10 == 0:
+                fout.write(str(i)+"|"+str(inj.Nsrc)+"|"+str(inj.Ndensity)+"|"+str(inj.TotDiffuseFlux)+"|"+str(len(inj.Det["IsotropicHS"].EvList))+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(inj.PTDisc)+"|"+str(inj.Det["IsotropicHS"].EvList[-1][-1])+"\n")
+            i=i+1
+            if inj.PTDisc and not chunkscaler:
+                chunksize = chunksize*10
+                chunkscaler = True
+            if inj.PTDisc:
+                absdetectcount=absdetectcount+1
+    abscountnow = absdetectcount
+    print "Switching at count:", cnt
+    chunksize = chunksize*10.
+    for j in range(0,30):
+        cond, line = inj.AddOneSource(luminosity, chunksize=chunksize, counter=cnt+j)
+        if cond:
+            if (len(inj.Det["IsotropicHS"].EvList)-(inj.NL+inj.SL+inj.NU+inj.SU)/2.) > 10*(inj.NO+inj.SO-(inj.NL+inj.SL+inj.NU+inj.SU)/2.) and (inj.TotDiffuseFlux/3.65e-4 < 100. ) and not(inj.TotDiffuseFlux/3.65e-4 > 10. ) and (chunksize < 50000000):
+                chunksize = chunksize*10.
+                chunkscaler = True
+            print inj.Nsrc, inj.Ndensity, inj.TotDiffuseFlux, len(inj.Det["IsotropicHS"].EvList), inj.PTDisc
+            fout.write(str(i)+"|"+str(inj.Nsrc)+"|"+str(inj.Ndensity)+"|"+str(inj.TotDiffuseFlux)+"|"+str(len(inj.Det["IsotropicHS"].EvList))+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(inj.PTDisc)+"|"+str(inj.Det["IsotropicHS"].EvList[-1][-1])+"\n")
+            if (inj.TotDiffuseFlux > 3.65e-3) and (len(inj.Det["IsotropicHS"].EvList)-(inj.NL+inj.SL+inj.NU+inj.SU)/2.) > 3*(inj.NO+inj.SO-(inj.NL+inj.SL+inj.NU+inj.SU)/2.):
                 break
             i=i+1
+            if inj.PTDisc:
+                absdetectcount=absdetectcount+1
+
+            
     print inj.Nsrc, inj.Ndensity, inj.TotDiffuseFlux, len(inj.Det["IsotropicHS"].EvList), inj.PTDisc
     fout.write(str(i)+"|"+str(inj.Nsrc)+"|"+str(inj.Ndensity)+"|"+str(inj.TotDiffuseFlux)+"|"+str(len(inj.Det["IsotropicHS"].EvList))+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(inj.PTDisc)+"|"+str(inj.Det["IsotropicHS"].EvList[-1][-1])+"\n")
     fout.close()
@@ -201,7 +243,10 @@ class Detector:
             pl.close('all')
 
             if not os.path.exists(DDIR+"/Exposures"):
-                os.makedirs(DDIR+"/Exposures")
+                try:
+                    os.makedirs(DDIR+"/Exposures")
+                except:
+                    print "Weird4"
             fig = plt.figure()
             plt.xlabel('Decl $[\circ]$)')
             plt.title("Exposure Function "+self.Name)
@@ -280,7 +325,7 @@ class PS_hs:
     def GetStackedLLH(self,HESEMapsSum,ExposureNormMap=None):
         sys.stdout = open(os.devnull, "w")
         sigmaR=radians(self.sigma)
-        msmap=hp.smoothing(HESEMapsSum, sigma=sigmaR,verbose=False,lmax=64,regression=False)
+        msmap=hp.smoothing(HESEMapsSum, sigma=sigmaR,verbose=False,lmax=64)
         sys.stdout = sys.__stdout__
         if ExposureNormMap!=None:
             msmap=msmap*ExposureNormMap
@@ -302,7 +347,7 @@ def IsoGenerator(size, N=1., S=1.):
 #====================================================================================================================================================================
 #====================================================================================================================================================================
 class Injector:
-    def __init__(self,TwoMRSMaps=None,sim=True, pthresh=3.e-3, zslices = 16, smoothing=0.0, m=3):
+    def __init__(self,TwoMRSMaps=None,sim=True, pthresh=3.e-3, zslices = 16, smoothing=0.0, m=3, zmax=3.):
         self.HESEMaps=TwoMRSMaps
         self.sim=sim
         self.pthresh = pthresh
@@ -312,7 +357,7 @@ class Injector:
         self.PTDisc=False
         self.Det={}
         if sim:
-            print 'Total Median Hotspots above threshold p value ',pthresh,':', (self.NU+self.NL+self.SU+self.SL)/2
+            print 'Total Median Hotspots above threshold p value ',pthresh,':', (self.NU+self.NL+self.SU+self.SL)/2,'N:S', (self.NU+self.NL)/2, (self.SU+self.SL)/2
             print 'Total Observed Hotspots', self.NO + self.SO
             self.Det["IsotropicHS"]=Detector(Name="IceCubePSSkyMap", EvList=IsoGenerator((self.NU+self.NL+self.SU+self.SL)/2, self.NU+self.NL, self.SU+self.SL))
         self.c_evWeights={}
@@ -337,6 +382,14 @@ class Injector:
         self.M = m
         self.TotDiffuseFlux=0.
         self.Fluxes=[]
+        self.Zmax=zmax
+        self.scaler = N0Scaler(self.M, self.Zmax)
+        self.DCMRmax=cosmo.comoving_distance(self.Zmax).value
+        if self.M:
+            self.Evoprobx = np.linspace(0, self.Zmax, 1500)
+            self.Evoproby = np.power(1.+self.Evoprobx, self.M)*np.power(self.Evoprobx, 2.)
+            self.backpolate = InterpolatedUnivariateSpline(self.Evoproby, self.Evoprobx)
+        
 
     def GenerateDecRaReal(self, z):
         if z<self.Zarr[-1]:
@@ -348,17 +401,17 @@ class Injector:
         
         index = np.random.choice(np.arange(hp.nside2npix(16)), size=1, p = samplemap)
         
-        return IndexToDeclRa(index)
+        return IndexToDeclRa(index[0])
         
         
-    def AddOneSource(self, lum, CR="IsotropicHS", chunksize=1):
-        zmax = 3.0
+    def AddOneSource(self, lum, CR="IsotropicHS", chunksize=1, counter=0):
         self.PTDisc = False
         if self.M:
-            rs = np.random.uniform(1, np.power((1.+zmax), self.M), size=chunksize)
-            z = np.power(rs, 1./self.M) - 1.
+            rs = np.random.uniform(0, np.power((1.+self.Zmax), self.M)*np.power(self.Zmax,2), size=chunksize)
+            z = self.backpolate(rs)
         else:
-            z = np.random.uniform(0, zmax, size=chunksize)
+            rs = np.random.uniform(0, np.power(self.Zmax, 2), size=chunksize)
+            z = np.power(rs, 0.5)
         
         lbefore = str(self.Nsrc)+"|"+str(self.Ndensity)+"|"+str(self.TotDiffuseFlux)+"|"+str(len(self.Det["IsotropicHS"].EvList))+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(np.nan)+"|"+str(self.PTDisc)+"|"+str(self.Det["IsotropicHS"].EvList[-1][-1])+"\n"
         
@@ -367,31 +420,37 @@ class Injector:
         minsens =self.perf.minsens
         mindisc =self.perf.mindisc
         
-        zmax = LumFluxToZ(lum, minsens)
         self.TotDiffuseFlux = self.TotDiffuseFlux+flux.sum()
         
 
         
         z = z[(flux>(minsens+mindisc)/2.)]
         flux = flux[(flux>(minsens+mindisc)/2.)]
-        print PF(), len(z), "Sources survive"
+        if len(z):
+            print PF(),counter,':' ,len(z), "Sources survive"
         self.Nsrc=self.Nsrc+chunksize
-        self.Ndensity = float(self.Nsrc)*3./(4.*np.pi*np.power(cosmocalc(z=zmax)['DCMR_Mpc'], 3.)*N0Scaler(self.M, zmax))
+        self.Ndensity = float(self.Nsrc)*3./(4.*np.pi*np.power(self.DCMRmax, 3.)*self.scaler)
+        
+        #print PF(), len(z), 'sources survive'
+        
+        if len(z)>0:
+            print 'Current Density : ', self.Ndensity
         
         
         
         count = 0
-        for znow, flux in zip(z, flux):
+        for znow, fl in zip(z, flux):
             dec, ra = self.GenerateDecRaReal(znow)
             sens = self.perf.Sensit(dec)
             disc = self.perf.Disco(dec)
             ptdisc = self.perf.PTSensit(dec)
-            if flux > (sens+disc)/2.:
-                self.Det[CR].EvList.append([dec, ra, 2., flux])
+            #print 'Diag:', dec, ra, fl ,sens, disc, ptdisc
+            if fl > (sens+disc)/2.:
+                self.Det[CR].EvList.append([dec, ra, 2., fl])
                 count = count+1
-            if flux > ptdisc:
+            if fl > ptdisc:
                 self.PTDisc = True
-        return count, lbefore
+        return count, lbefore                  
 
         
         
@@ -487,7 +546,10 @@ class Injector:
 
     def HESEMapsSumf(self,CR):
         if not os.path.exists(DDIR+"/SourcesPlots"):
-            os.makedirs(DDIR+"/SourcesPlots")
+            try:
+                os.makedirs(DDIR+"/SourcesPlots")
+            except:
+                print "Weird3"
         m = np.arange(hp.nside2npix(NSIDE))
         m=m*0.
 
@@ -576,7 +638,7 @@ class TwoMRSMap:
             eqmap=hp.pixelfunc.ud_grade(eqmap,NSIDE)
         
         if smoothing:
-            eqmap = hp.smoothing(eqmap, sigma=np.deg2rad(smoothing),verbose=False,lmax=64,regression=False)
+            eqmap = hp.smoothing(eqmap, sigma=np.deg2rad(smoothing),verbose=False,lmax=64)
         #print 'wtf', eqmap, np.sum(eqmap) 
         return eqmap/np.sum(eqmap)
 
@@ -659,7 +721,7 @@ class LLH():
     
 class ICPSPerformance():
     def __init__(self, fname):
-        self.cosdec = np.genfromtxt(fname, delimiter=",", usecols=(0))
+        self.sindec = np.genfromtxt(fname, delimiter=",", usecols=(0))
         self.fomflux =  np.genfromtxt(fname, delimiter=",", usecols=(1))
         self.sensdiscratio = self.fomflux[42]/self.fomflux[25]  
         self.sensdiscratiopt = self.fomflux[43]/self.fomflux[25]
@@ -668,7 +730,7 @@ class ICPSPerformance():
     
     def Disco(self, decl):
         decl = np.deg2rad(decl)
-        return np.interp([decl], np.arccos(self.cosdec)[0:42], self.fomflux[0:42])[0]*1e3
+        return np.interp([decl], np.arcsin(self.sindec)[0:42], self.fomflux[0:42])[0]*1.e3
     
     def Sensit(self, decl):
         return self.Disco(decl)*self.sensdiscratio
